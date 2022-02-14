@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.6;
 
-import { IRewardsRecipient } from "../interfaces/IRewardsDistributionRecipient.sol";
+import { IRewardsDistributionRecipient } from "../interfaces/IRewardsDistributionRecipient.sol";
 import { ImmutableModule } from "../shared/ImmutableModule.sol";
 import { SafeERC20, IERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IProtocolFeeCollector } from "../interfaces/IProtocolFeeCollector.sol";
@@ -9,8 +9,8 @@ import { IProtocolFeeCollector } from "../interfaces/IProtocolFeeCollector.sol";
 
 /**
  * @title  RewardsDistributor
- * @author Embr
- * @notice RewardsDistributor allows Fund Managers to send rewards
+ * @author mStable
+ * @notice RewardsDistributor allows Fund Managers to send rewards (usually in MTA)
  * to specified Reward Recipients.
  */
 contract RewardsDistributor is ImmutableModule {
@@ -29,8 +29,14 @@ contract RewardsDistributor is ImmutableModule {
     mapping(address => bool) public teamManagers;
     mapping(address => bool) public treasuaryManagers;
 
-    event AddedManager(address indexed _address);
-    event RemovedManager(address indexed _address);
+    event AddedFundManager(address indexed _address);
+    event AddedTeamManager(address indexed _address);
+    event AddedTreasuaryManager(address indexed _address);
+
+    event RemovedFundManager(address indexed _address);
+    event RemovedTeamManager(address indexed _address);
+    event RemovedTreasuaryManager(address indexed _address);
+
     event DistributedReward(
         address recipient,
         address rewardToken,
@@ -45,7 +51,7 @@ contract RewardsDistributor is ImmutableModule {
         _;
     }
 
-     /**
+        /**
      * @dev Modifier to allow function calls only from a fundManager address.
      */
     modifier onlyTeamManager() {
@@ -61,6 +67,7 @@ contract RewardsDistributor is ImmutableModule {
         _;
     }
 
+
     /** @dev Recipient is a module, governed by Embr governance */
     constructor(
         address _fulcrum, 
@@ -68,11 +75,11 @@ contract RewardsDistributor is ImmutableModule {
         address[] memory _fundManagers,
         address[] memory _teamManagers,
         address[] memory _treasuaryManagers, 
-        uint256 _teamPercentage,
-        uint256 _xembrPercentage,
-        uint256 _treasuaryPercentage
+        uint256 _teamPct,
+        uint256 _fundPct,
+        uint256 _treasuaryPct
     ) ImmutableModule(_fulcrum) {
-        require(_teamPercentage + _xembrPercentage + _treasuaryPercentage == 1000, "Distrubtion percent is not 1000");
+        require(_teamPct + _fundPct + _treasuaryPct == 1000, "Distrubtion percent is not 1000");
 
         protocolFeeCollector = IProtocolFeeCollector(_protocolFeeCollector);
 
@@ -86,9 +93,9 @@ contract RewardsDistributor is ImmutableModule {
             _addTreasuaryManager(_treasuaryManagers[i]);
         }
 
-        teamPercentage = _teamPercentage;
-        xembrPercentage = _xembrPercentage;
-        treasuaryPercentage = _treasuaryPercentage;
+        teamPct = _teamPct;
+        fundPct = _fundPct;
+        treasuaryPct = _treasuaryPct;
     }
 
     /**
@@ -199,9 +206,9 @@ contract RewardsDistributor is ImmutableModule {
      * @param _recipient        Reward recipient to credit
      */
     function distributeProtocolRewards(
-        IRewardsRecipient _recipient
+        IRewardsDistributionRecipient _recipient
     ) external onlyFundManager {
-        IRewardsRecipientWithPlatformToken recipient = _recipient;
+        IRewardsDistributionRecipient recipient = _recipient;
         uint256 activeTokenCount = recipient.activeTokenCount();
 
         IERC20[] memory rewardTokens = new IERC20[](activeTokenCount);
@@ -212,13 +219,13 @@ contract RewardsDistributor is ImmutableModule {
             rewardTokens[i] = rewardToken;
         }
         uint256[] memory feeAmounts = protocolFeeCollector.getCollectedFeeAmounts(rewardTokens);
-        protocolFeeCollector.withdrawCollectedFees(rewardTokens, feeAmounts, address(_recipient));
+        protocolFeeCollector.withdrawCollectedFees(rewardTokens, feeAmounts, address(this));
  
         for (uint256 i = 0; i < activeTokenCount; i++) {
             if (feeAmounts[i] > 0) { 
-                uint256 fundAmt = (balance * fundPct) / 1000;
-                uint256 teamAmt = (balance * teamPct) / 1000;
-                uint256 treasuaryAmt = (balance * treasuaryPct) / 1000;
+                uint256 fundAmt = (feeAmounts[i] * fundPct) / 1000;
+                uint256 teamAmt = (feeAmounts[i] * teamPct) / 1000;
+                uint256 treasuaryAmt = (feeAmounts[i] * treasuaryPct) / 1000;
 
                 if (teamAmt > 0) { 
                     teamBalance[address(rewardTokens[i])];
@@ -229,15 +236,50 @@ contract RewardsDistributor is ImmutableModule {
                 }
 
                 // Only after successful fee collcetion - notify the contract of the new funds
-                recipient.notifyRewardAmount(currentIndexes[i], feeAmounts[i]);
+                if (fundAmt > 0) {
+                    rewardTokens[i].safeTransfer(address(recipient), fundAmt);
+                    recipient.notifyRewardAmount(currentIndexes[i], fundAmt);
+                }
 
                 emit DistributedReward(
                     address(recipient),
-                    address(rewardToken),
-                    amount
+                    address(rewardTokens[i]),
+                    feeAmounts[i]
                 );
             }
         }
+    }
+
+    /**
+     * @dev Distributes tokens to team
+     * of the transfer. Only callable by FundManagers
+     * @param _recipient   address of rewards recipient to add new reward token to
+     * @param _rewardToken  Address of the reward token to claim
+     */
+    function addRewardToken(
+        IRewardsDistributionRecipient _recipient,
+        address _rewardToken
+    ) external onlyFundManager {
+         IRewardsDistributionRecipient recipient = _recipient;
+        _recipient.add(_rewardToken);
+    }
+
+    /**
+     * @dev Distributes tokens to team
+     * of the transfer. Only callable by FundManagers
+     * @param _recipient   address of rewards recipient to add new reward token to
+     * @param _id  active reward info index to update
+     * @param _rewardToken  Address of the reward token to add
+     * @param _index  Index if alreayd existing token
+     */
+    function updateRewardToken(
+        IRewardsDistributionRecipient _recipient,
+        uint256 _id, 
+        address _rewardToken,
+        uint256 _index
+    ) external onlyFundManager {
+         IRewardsDistributionRecipient recipient = _recipient;
+        _recipient.update(_id, _rewardToken, _index);
     }
 
      /**
@@ -246,24 +288,64 @@ contract RewardsDistributor is ImmutableModule {
      * @param _recipient        Reward recipient to credit
      */
     function distributeRewards(
-        IRewardsRecipient _recipient,
+        IRewardsDistributionRecipient _recipient,
         uint256[] calldata _amounts,
-        uint256[] calldata _indexes,
+        uint256[] calldata _indexes
     ) external onlyFundManager {
         uint256 len = _indexes.length;
-         require(len == _amounts.length, "Mismatching inputs");
-        IRewardsRecipientWithPlatformToken recipient = _recipient;
+        require(len == _amounts.length, "Mismatching inputs");
+        IRewardsDistributionRecipient recipient = _recipient;
         for (uint256 i = 0; i < len; i++) {
             IERC20 rewardToken =  recipient.getRewardToken(i);
-            rewardToken.safeTransferFrom(msg.sender, address(recipient), amount);
-            recipient.notifyRewardAmount(i, amount);
+            rewardToken.safeTransferFrom(msg.sender, address(recipient), _amounts[i]);
+            recipient.notifyRewardAmount(i, _amounts[i]);
 
             emit DistributedReward(
                 address(recipient),
                 address(rewardToken),
-                amount
+                _amounts[i]
             );
         }
 
+    }
+
+    /**
+     * @dev Distributes tokens to team
+     * of the transfer. Only callable by FundManagers
+     * @param _addr   Address to send reward to
+     * @param _token  Address of the reward token to claim
+     */
+    function withdrawTeam(address _addr, address _token) 
+        external 
+        onlyTeamManager 
+    {
+        uint256 _teamBalance = teamBalance[_token];
+        if (_teamBalance > 0) { 
+            uint256 balance = IERC20(_token).balanceOf(address(this));
+            if (balance > 0 && balance >= _teamBalance) {
+                teamBalance[_token] = 0;
+                IERC20(_token).safeTransfer(_addr, _teamBalance);
+            }
+        }
+    }
+
+    /**
+     * @dev Distributes tokens to team
+     * of the transfer. Only callable by FundManagers
+     * @param _addr   Address to send reward to
+     * @param _token  Address of the reward token to claim
+     */
+    function withdrawTreasuary(address _addr, address _token) 
+        external 
+        onlyTreasuaryManager 
+    {
+        uint256 _treasuaryBalance = treasuaryBalance[_token];
+        if (_treasuaryBalance > 0) { 
+            uint256 balance = IERC20(_token).balanceOf(address(this));
+            if (balance > 0 && balance >= _treasuaryBalance) {
+                treasuaryBalance[_token] = 0;
+                IERC20(_token).safeTransfer(_addr, _treasuaryBalance);
+            }
+        }
     }
 }

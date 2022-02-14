@@ -85,30 +85,6 @@ abstract contract ImmutableModule is ModuleKeys {
     }
 
     /**
-     * @dev Return SavingsManager Module address from the Fulcrum
-     * @return Address of the SavingsManager Module contract
-     */
-    function _savingsManager() internal view returns (address) {
-        return fulcrum.getModule(KEY_SAVINGS_MANAGER);
-    }
-
-    /**
-     * @dev Return Recollateraliser Module address from the Fulcrum
-     * @return  Address of the Recollateraliser Module contract (Phase 2)
-     */
-    function _recollateraliser() internal view returns (address) {
-        return fulcrum.getModule(KEY_RECOLLATERALISER);
-    }
-
-    /**
-     * @dev Return Liquidator Module address from the Fulcrum
-     * @return  Address of the Liquidator Module contract
-     */
-    function _liquidator() internal view returns (address) {
-        return fulcrum.getModule(KEY_LIQUIDATOR);
-    }
-
-    /**
      * @dev Return ProxyAdmin Module address from the Fulcrum
      * @return Address of the ProxyAdmin Module contract
      */

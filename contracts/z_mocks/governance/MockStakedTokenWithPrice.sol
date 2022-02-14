@@ -2,14 +2,14 @@
 pragma solidity 0.8.6;
 pragma abicoder v2;
 
-import { StakedToken } from "../../governance/staking/StakedToken.sol";
+import { xEmbrToken } from "../../governance/staking/xEmbrToken.sol";
 
 /**
  * @title StakedTokenBPT
  * @dev Derives from StakedToken, and simply adds the ability to withdraw any unclaimed $BAL tokens
  * that are at this address
  **/
-contract MockStakedTokenWithPrice is StakedToken {
+contract MockStakedTokenWithPrice is xEmbrToken {
     /// @notice Most recent PriceCoefficient
     uint256 public priceCoefficient;
 
@@ -17,15 +17,13 @@ contract MockStakedTokenWithPrice is StakedToken {
 
     constructor(
         address _fulcrum,
-        address _rewardsToken,
         address _questManager,
         address _stakedToken,
         uint256 _cooldownSeconds,
         uint256 _unstakeWindow
     )
-        StakedToken(
+        xEmbrToken(
             _fulcrum,
-            _rewardsToken,
             _questManager,
             _stakedToken,
             _cooldownSeconds,
@@ -39,7 +37,7 @@ contract MockStakedTokenWithPrice is StakedToken {
         bytes32 _symbolArg,
         address _rewardsDistributorArg
     ) external initializer {
-        __StakedToken_init(_nameArg, _symbolArg, _rewardsDistributorArg);
+        __xEmbrToken_init(_nameArg, _symbolArg, _rewardsDistributorArg);
         priceCoefficient = 10000;
     }
 

@@ -4,17 +4,17 @@ pragma solidity 0.8.6;
 import { MathUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/math/MathUpgradeable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { ECDSAUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
-import { xEmbrToken } from "./xEmbrToken.sol";
+import { xEmbr } from "./xEmbr.sol";
 import { IGovernanceHook } from "./interfaces/IGovernanceHook.sol";
 import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title xEmbrVotingToken
- * @notice xEmbrToken is a checkpointed Voting Token derived from OpenZeppelin "ERC20VotesUpgradable"
+ * @notice xEmbr is a checkpointed Voting Token derived from OpenZeppelin "ERC20VotesUpgradable"
  * @author mStable
  * @dev Forked from https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/blob/f9cdbd7d82d45a614ee98a5dc8c08fb4347d0fea/contracts/token/ERC20/extensions/ERC20VotesUpgradeable.sol
  * Changes:
- *   - Inherits custom xEmbrToken rather than basic ERC20
+ *   - Inherits custom xEmbr rather than basic ERC20
  *     - Removal of `Permit` functionality & `delegatebySig`
  *   - Override `delegates` fn as described in their docs
  *   - Prettier formatting
@@ -22,7 +22,7 @@ import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/I
  *   - Move totalSupply checkpoints to `afterTokenTransfer`
  *   - Add _governanceHook hook
  */
-abstract contract xEmbrVotingToken is Initializable, xEmbrToken {
+abstract contract xEmbrVotingToken is Initializable, xEmbr {
     struct Checkpoint {
         uint32 fromBlock;
         uint224 votes;
@@ -56,10 +56,10 @@ abstract contract xEmbrVotingToken is Initializable, xEmbrToken {
 
     constructor(
         address _fulcrum,
-        address _rewardsToken,
+        address _embr,
         address _questManager,
         bool _hasPriceCoeff
-    ) xEmbrToken(_fulcrum, _rewardsToken, _questManager, _hasPriceCoeff) {}
+    ) xEmbr(_fulcrum, _embr, _questManager, _hasPriceCoeff) {}
 
     function __xEmbrVotingToken_init() internal initializer {}
 

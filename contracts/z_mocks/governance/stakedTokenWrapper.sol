@@ -3,19 +3,19 @@ pragma solidity 0.8.6;
 
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { StakedToken } from "../../governance/staking/StakedToken.sol";
+import { xEmbrToken } from "../../governance/staking/xEmbrToken.sol";
 
 /**
- * Used to test contract interactions with the StakedToken
+ * Used to test contract interactions with the xEmbrToken
  */
 contract StakedTokenWrapper {
     using SafeERC20 for IERC20;
 
     IERC20 public rewardsToken;
-    StakedToken public stakedToken;
+    xEmbrToken public stakedToken;
 
     constructor(address _rewardsToken, address _stakedToken) {
-        stakedToken = StakedToken(_stakedToken);
+        stakedToken = xEmbrToken(_stakedToken);
         rewardsToken = IERC20(_rewardsToken);
         rewardsToken.safeApprove(_stakedToken, 2**256 - 1);
     }

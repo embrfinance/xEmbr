@@ -14,9 +14,16 @@ import { IRewardsDistributionRecipient } from "../interfaces/IRewardsDistributio
  */
 abstract contract RewardsDistributionRecipient is IRewardsDistributionRecipient, ImmutableModule {
     // @abstract
-    function notifyRewardAmount(uint256 reward) external virtual override;
+    function notifyRewardAmount(uint256 _tid, uint256 reward) external virtual override;
 
-    function getRewardToken() external view virtual override returns (IERC20);
+    function getRewardToken(uint256 _tid) external view virtual override returns (IERC20);
+
+    function getActiveIndex(uint256 _tid) external view virtual override returns (uint256);
+
+    function add(address _rewardTokens) external virtual override;
+
+    function update( uint256 _id, address _rewardToken, uint256 _index) external virtual override;
+
 
     // This address has the ability to distribute the rewards
     address public rewardsDistributor;

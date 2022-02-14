@@ -6,17 +6,23 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IRewardsDistributionRecipient {
     function notifyRewardAmount(uint256 _tid, uint256 reward) external;
 
-    function getActiveIndex() external view returns (uint256);
+    function getRewardToken(uint256 _tid) external view returns (IERC20);
 
-    function getRewardToken() external view returns (IERC20);
+    function getActiveIndex(uint256 _tid) external view returns (uint256);
+
+    function activeTokenCount() external view returns (uint256);
+
+    function add(address _rewardTokens) external;
+
+    function update( uint256 _id, address _rewardToken, uint256 _index) external;
 }
 
 interface IRewardsRecipientWithPlatformToken {
     function notifyRewardAmount(uint256 _tid, uint256 reward) external;
 
-    function getRewardToken() external view returns (IERC20);
+    function getRewardToken(uint256 _tid) external view returns (IERC20);
 
-    function getActiveIndex() external view returns (uint256);
+    function getActiveIndex(uint256 _tid) external view returns (uint256);
 
     function getPlatformToken() external view returns (IERC20);
 }

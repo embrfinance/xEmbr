@@ -1,52 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.6;
-pragma abicoder v2;
 
-import { IxEmbr } from "./interfaces/IxEmbr.sol";
-import { xEmbrVotingToken } from "./xEmbrVotingToken.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { Root } from "../../shared/Root.sol";
-import { InitializableReentrancyGuard } from "../../shared/InitializableReentrancyGuard.sol";
-import "./deps/GamifiedTokenStructs.sol";
+import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
+import { SafeCastExtended } from "../../shared/SafeCastExtended.sol";
+import { ILockedERC20 } from "./interfaces/ILockedERC20.sol";
+import { HeadlessStakingRewards } from "../../rewards/staking/HeadlessStakingRewards.sol";
+import { IQuestManager } from "./interfaces/IQuestManager.sol";
+import "./deps/xEmbrStructs.sol";
 
 /**
  * @title xEmbr
- * @notice xEmbr is a non-transferrable ERC20 token that allows users to stake and withdraw, earning voting rights.
+ * @notice xEmbr is a non-transferrable ERC20 token that has both a raw balance and a scaled balance.
  * Scaled balance is determined by quests a user completes, and the length of time they keep the raw balance wrapped.
- * Stakers can unstake, after the elapsed cooldown period, and before the end of the unstake window. Users voting/earning
- * power is slashed during this time, and they may face a redemption fee if they leave early.
- * Voting power can be used for a number of things: voting in the embr DAO/emission dials, boosting rewards, earning
- * rewards here. While a users "balance" is unique to themselves, they can choose to delegate their voting power (which will apply
- * to voting in the embr DAO and emission dials).
- * @author mStable, EmbrFinanace
- * @dev Only whitelisted contracts can communicate with this contract, in order to avoid having tokenised wrappers that
- * could potentially circumvent our unstaking procedure.
+ * QuestMasters can add new quests for stakers to complete, for which they are rewarded with permanent or seasonal multipliers.
+ * @author mStable
+ * @dev Originally forked from openzeppelin-contracts-upgradeable/contracts/token/ERC20/ERC20Upgradeable.sol
+ * Changes:
+ *   - Removed the transfer, transferFrom, approve fns to make non-transferrable
+ *   - Removed `_allowances` storage
+ *   - Removed `_beforeTokenTransfer` hook
+ *   - Replaced standard uint256 balance with a single struct containing all data from which the scaledBalance can be derived
+ *   - Quest system implemented that tracks a users quest status and applies multipliers for them
  **/
-contract xEmbr is xEmbrVotingToken, InitializableReentrancyGuard {
-    using SafeERC20 for IERC20;
+abstract contract xEmbr is
+    ILockedERC20,
+    Initializable,
+    ContextUpgradeable,
+    HeadlessStakingRewards
+{
+    /// @notice name of this token (ERC20)
+    bytes32 private _name;
+    /// @notice symbol of this token (ERC20)
+    bytes32 private _symbol;
+    /// @notice number of decimals of this token (ERC20)
+    uint8 public constant override decimals = 18;
 
-    /// @notice Core token that is staked and tracked (e.g. MTA)
-    IERC20 public immutable STAKED_TOKEN;
-    /// @notice Seconds a user must wait after she initiates her cooldown before withdrawal is possible
-    uint256 public immutable COOLDOWN_SECONDS;
-    /// @notice Window in which it is possible to withdraw, following the cooldown period
-    uint256 public immutable UNSTAKE_WINDOW;
-    /// @notice A week
-    uint256 private constant ONE_WEEK = 7 days;
-
-    /// @notice Whitelisted smart contract integrations
-    mapping(address => bool) public whitelistedWrappers;
-
-    event Staked(address indexed user, uint256 amount, address delegatee);
-    event Withdraw(address indexed user, address indexed to, uint256 amount);
-    event Cooldown(address indexed user, uint256 percentage);
-    event CooldownExited(address indexed user);
-    event SlashRateChanged(uint256 newRate);
-    event Recollateralised();
-    event WrapperWhitelisted(address wallet);
-    event WrapperBlacklisted(address wallet);
+    /// @notice User balance structs containing all data needed to scale balance
+    mapping(address => Balance) internal _balances;
+    /// @notice Most recent price coefficients per user
+    mapping(address => uint256) internal _userPriceCoeff;
+    /// @notice Quest Manager
+    IQuestManager public immutable questManager;
+    /// @notice Has variable price
+    bool public immutable hasPriceCoeff;
 
     /***************************************
                     INIT
@@ -54,25 +51,18 @@ contract xEmbr is xEmbrVotingToken, InitializableReentrancyGuard {
 
     /**
      * @param _fulcrum System fulcrum
-     * @param _rewardsToken Token that is being distributed as a reward. eg MTA
+     * @param _embr Embr Token
      * @param _questManager Centralised manager of quests
-     * @param _stakedToken Core token that is staked and tracked (e.g. MTA)
-     * @param _cooldownSeconds Seconds a user must wait after she initiates her cooldown before withdrawal is possible
-     * @param _unstakeWindow Window in which it is possible to withdraw, following the cooldown period
      * @param _hasPriceCoeff true if raw staked amount is multiplied by price coeff to get staked amount. eg BPT Staked Token
      */
     constructor(
         address _fulcrum,
-        address _rewardsToken,
+        address _embr,
         address _questManager,
-        address _stakedToken,
-        uint256 _cooldownSeconds,
-        uint256 _unstakeWindow,
         bool _hasPriceCoeff
-    ) xEmbrVotingToken(_fulcrum, _rewardsToken, _questManager, _hasPriceCoeff) {
-        STAKED_TOKEN = IERC20(_stakedToken);
-        COOLDOWN_SECONDS = _cooldownSeconds;
-        UNSTAKE_WINDOW = _unstakeWindow;
+    ) HeadlessStakingRewards(_fulcrum, _embr) {
+        questManager = IQuestManager(_questManager);
+        hasPriceCoeff = _hasPriceCoeff;
     }
 
     /**
@@ -84,319 +74,484 @@ contract xEmbr is xEmbrVotingToken, InitializableReentrancyGuard {
         bytes32 _nameArg,
         bytes32 _symbolArg,
         address _rewardsDistributorArg
-    ) public initializer {
-        __xEmbrToken_init(_nameArg, _symbolArg, _rewardsDistributorArg);
-        _initializeReentrancyGuard();
+    ) internal initializer {
+        __Context_init_unchained();
+        _name = _nameArg;
+        _symbol = _symbolArg;
+        HeadlessStakingRewards._initialize(_rewardsDistributorArg);
     }
 
     /**
-     * @dev Only whitelisted contracts can call core fns. mStable governors can whitelist and de-whitelist wrappers.
-     * Access may be given to yield optimisers to boost rewards, but creating unlimited and ungoverned wrappers is unadvised.
+     * @dev Checks that _msgSender is the quest Manager
      */
-    modifier assertNotContract() {
-        _assertNotContract();
+    modifier onlyQuestManager() {
+        require(_msgSender() == address(questManager), "Not verified");
         _;
     }
 
-    function _assertNotContract() internal view {
-        if (_msgSender() != tx.origin) {
-            require(whitelistedWrappers[_msgSender()], "Not a whitelisted contract");
-        }
-    }
-
     /***************************************
-                    ACTIONS
+                    VIEWS
     ****************************************/
 
+    function name() public view override returns (string memory) {
+        return bytes32ToString(_name);
+    }
+
+    function symbol() public view override returns (string memory) {
+        return bytes32ToString(_symbol);
+    }
+
     /**
-     * @dev Stake an `_amount` of STAKED_TOKEN in the system. This amount is added to the users stake and
-     * boosts their voting power.
-     * @param _amount Units of STAKED_TOKEN to stake
+     * @dev Total sum of all scaled balances
+     * In this instance, leave to the child token.
      */
-    function stake(uint256 _amount) external {
-        _transferAndStake(_amount, address(0), false);
-    }
-
-    /**
-     * @dev Stake an `_amount` of STAKED_TOKEN in the system. This amount is added to the users stake and
-     * boosts their voting power.
-     * @param _amount Units of STAKED_TOKEN to stake
-     * @param _exitCooldown Bool signalling whether to take this opportunity to end any outstanding cooldown and
-     * return the user back to their full voting power
-     */
-    function stake(uint256 _amount, bool _exitCooldown) external {
-        _transferAndStake(_amount, address(0), _exitCooldown);
-    }
-
-    /**
-     * @dev Stake an `_amount` of STAKED_TOKEN in the system. This amount is added to the users stake and
-     * boosts their voting power. Take the opportunity to change delegatee.
-     * @param _amount Units of STAKED_TOKEN to stake
-     * @param _delegatee Address of the user to whom the sender would like to delegate their voting power
-     */
-    function stake(uint256 _amount, address _delegatee) external {
-        _transferAndStake(_amount, _delegatee, false);
-    }
-
-    /**
-     * @dev Transfers tokens from sender before calling `_settleStake`
-     */
-    function _transferAndStake(
-        uint256 _amount,
-        address _delegatee,
-        bool _exitCooldown
-    ) internal {
-        STAKED_TOKEN.safeTransferFrom(_msgSender(), address(this), _amount);
-        _settleStake(_amount, _delegatee, _exitCooldown);
-    }
-
-    /**
-     * @dev Internal stake fn. Can only be called by whitelisted contracts/EOAs and only before a recollateralisation event.
-     * NOTE - Assumes tokens have already been transferred
-     * @param _amount Units of STAKED_TOKEN to stake
-     * @param _delegatee Address of the user to whom the sender would like to delegate their voting power
-     * @param _exitCooldown Bool signalling whether to take this opportunity to end any outstanding cooldown and
-     * return the user back to their full voting power
-     */
-    function _settleStake(
-        uint256 _amount,
-        address _delegatee,
-        bool _exitCooldown
-    ) internal assertNotContract {
-        require(_amount != 0, "INVALID_ZERO_AMOUNT");
-
-        // 1. Apply the delegate if it has been chosen (else it defaults to the sender)
-        if (_delegatee != address(0)) {
-            _delegate(_msgSender(), _delegatee);
-        }
-
-        // 2. Deal with cooldown
-        //      If a user is currently in a cooldown period, re-calculate their cooldown timestamp
-        Balance memory oldBalance = _balances[_msgSender()];
-        //      If we have missed the unstake window, or the user has chosen to exit the cooldown,
-        //      then reset the timestamp to 0
-        bool exitCooldown = _exitCooldown ||
-            (oldBalance.cooldownTimestamp > 0 &&
-                block.timestamp >
-                (oldBalance.cooldownTimestamp + COOLDOWN_SECONDS + UNSTAKE_WINDOW));
-        if (exitCooldown) {
-            emit CooldownExited(_msgSender());
-        }
-
-        // 3. Settle the stake by depositing the STAKED_TOKEN and minting voting power
-        _mintRaw(_msgSender(), _amount, exitCooldown);
-
-        emit Staked(_msgSender(), _amount, _delegatee);
-    }
-
-    /**
-     * @dev Withdraw raw tokens from the system, following an elapsed cooldown period.
-     * Note - May be subject to a transfer fee, depending on the users weightedTimestamp
-     * @param _amount Units of raw token to withdraw
-     * @param _recipient Address of beneficiary who will receive the raw tokens
-     * @param _amountIncludesFee Is the `_amount` specified inclusive of any applicable redemption fee?
-     * @param _exitCooldown Should we take this opportunity to exit the cooldown period?
-     **/
-    function withdraw(
-        uint256 _amount,
-        address _recipient,
-        bool _amountIncludesFee,
-        bool _exitCooldown
-    ) external {
-        _withdraw(_amount, _recipient, _amountIncludesFee, _exitCooldown);
-    }
-
-    /**
-     * @dev Withdraw raw tokens from the system, following an elapsed cooldown period.
-     * Note - May be subject to a transfer fee, depending on the users weightedTimestamp
-     * @param _amount Units of raw token to withdraw
-     * @param _recipient Address of beneficiary who will receive the raw tokens
-     * @param _amountIncludesFee Is the `_amount` specified inclusive of any applicable redemption fee?
-     * @param _exitCooldown Should we take this opportunity to exit the cooldown period?
-     **/
-    function _withdraw(
-        uint256 _amount,
-        address _recipient,
-        bool _amountIncludesFee,
-        bool _exitCooldown
-    ) internal assertNotContract {
-        require(_amount != 0, "INVALID_ZERO_AMOUNT");
-
-        // 1. the user must be within their UNSTAKE_WINDOW period in order to withdraw
-        Balance memory oldBalance = _balances[_msgSender()];
-        require(
-            block.timestamp > oldBalance.cooldownTimestamp + COOLDOWN_SECONDS,
-            "INSUFFICIENT_COOLDOWN"
-        );
-        require(
-            block.timestamp - (oldBalance.cooldownTimestamp + COOLDOWN_SECONDS) <=
-                UNSTAKE_WINDOW,
-            "UNSTAKE_WINDOW_FINISHED"
-        );
-
-        // 2. Get current balance
-        Balance memory balance = _balances[_msgSender()];
-
-        // 3. Apply redemption fee
-        //      e.g. (55e18 / 5e18) - 2e18 = 9e18 / 100 = 9e16
-        uint256 feeRate = calcRedemptionFeeRate(balance.weightedTimestamp);
-        //      fee = amount * 1e18 / feeRate
-        //      totalAmount = amount + fee
-        uint256 totalWithdraw = _amountIncludesFee
-            ? _amount
-            : (_amount * (1e18 + feeRate)) / 1e18;
-        uint256 userWithdrawal = (totalWithdraw * 1e18) / (1e18 + feeRate);
-
-        //      Check for percentage withdrawal
-        uint256 maxWithdrawal = oldBalance.cooldownUnits;
-        require(totalWithdraw <= maxWithdrawal, "Exceeds max withdrawal");
-
-        // 4. Exit cooldown if the user has specified, or if they have withdrawn everything
-        // Otherwise, update the percentage remaining proportionately
-        bool exitCooldown = _exitCooldown || totalWithdraw == maxWithdrawal;
-
-        // 5. Settle the withdrawal by burning the voting tokens
-        _burnRaw(_msgSender(), totalWithdraw, exitCooldown, false);
-        //      Log any redemption fee to the rewards contract
-        _notifyAdditionalReward(2**256 - 1, totalWithdraw - userWithdrawal);
-        //      Finally transfer tokens back to recipient
-        STAKED_TOKEN.safeTransfer(_recipient, userWithdrawal);
-
-        emit Withdraw(_msgSender(), _recipient, _amount);     
-    }
-
-    /**
-     * @dev Enters a cooldown period, after which (and before the unstake window elapses) a user will be able
-     * to withdraw part or all of their staked tokens. Note, during this period, a users voting power is significantly reduced.
-     * If a user already has a cooldown period, then it will reset to the current block timestamp, so use wisely.
-     * @param _units Units of stake to cooldown for
-     **/
-    function startCooldown(uint256 _units) external {
-        _startCooldown(_units);
-    }
-
-    /**
-     * @dev Ends the cooldown of the sender and give them back their full voting power. This can be used to signal that
-     * the user no longer wishes to exit the system. Note, the cooldown can also be reset, more smoothly, as part of a stake or
-     * withdraw transaction.
-     **/
-    function endCooldown() external {
-        require(_balances[_msgSender()].cooldownTimestamp != 0, "No cooldown");
-
-        _exitCooldownPeriod(_msgSender());
-
-        emit CooldownExited(_msgSender());
-    }
-
-    /**
-     * @dev Enters a cooldown period, after which (and before the unstake window elapses) a user will be able
-     * to withdraw part or all of their staked tokens. Note, during this period, a users voting power is significantly reduced.
-     * If a user already has a cooldown period, then it will reset to the current block timestamp, so use wisely.
-     * @param _units Units of stake to cooldown for
-     **/
-    function _startCooldown(uint256 _units) internal {
-        require(balanceOf(_msgSender()) != 0, "INVALID_BALANCE_ON_COOLDOWN");
-
-        _enterCooldownPeriod(_msgSender(), _units);
-
-        emit Cooldown(_msgSender(), _units);
-    }
-
-    /***************************************
-                    ADMIN
-    ****************************************/
-
-    /**
-     * @dev Allows governance to whitelist a smart contract to interact with the xEmbr (for example a yield aggregator or simply
-     * a Gnosis SAFE or other)
-     * @param _wrapper Address of the smart contract to list
-     **/
-    function whitelistWrapper(address _wrapper) external onlyGovernor {
-        whitelistedWrappers[_wrapper] = true;
-
-        emit WrapperWhitelisted(_wrapper);
-    }
-
-    /**
-     * @dev Allows governance to blacklist a smart contract to end it's interaction with the xEmbr
-     * @param _wrapper Address of the smart contract to blacklist
-     **/
-    function blackListWrapper(address _wrapper) external onlyGovernor {
-        whitelistedWrappers[_wrapper] = false;
-
-        emit WrapperBlacklisted(_wrapper);
-    }
-
-    /***************************************
-            BACKWARDS COMPATIBILITY
-    ****************************************/
-
-    /**
-     * @dev Allows for backwards compatibility with createLock fn, giving basic args to stake
-     * @param _value Units to stake
-     **/
-    function createLock(
-        uint256 _value,
-        uint256 /* _unlockTime */
-    ) external {
-        _transferAndStake(_value, address(0), false);
-    }
-
-    /**
-     * @dev Allows for backwards compatibility with increaseLockAmount fn by simply staking more
-     * @param _value Units to stake
-     **/
-    function increaseLockAmount(uint256 _value) external {
-        require(balanceOf(_msgSender()) != 0, "Nothing to increase");
-        _transferAndStake(_value, address(0), false);
-    }
-
-    /**
-     * @dev Backwards compatibility. Previously a lock would run out and a user would call this. Now, it will take 2 calls
-     * to exit in order to leave. The first will initiate the cooldown period, and the second will execute a full withdrawal.
-     **/
-    function exit() external virtual {
-        // Since there is no immediate exit here, this can be called twice
-        // If there is no cooldown, or the cooldown has passed the unstake window, enter cooldown
-        uint128 ts = _balances[_msgSender()].cooldownTimestamp;
-        if (ts == 0 || block.timestamp > ts + COOLDOWN_SECONDS + UNSTAKE_WINDOW) {
-            (uint256 raw, uint256 cooldownUnits) = rawBalanceOf(_msgSender());
-            _startCooldown(raw + cooldownUnits);
-        }
-        // Else withdraw all available
-        else {
-            _withdraw(_balances[_msgSender()].cooldownUnits, _msgSender(), true, false);
-        }
-    }
-
-    /***************************************
-                    GETTERS
-    ****************************************/
-
-    /**
-     * @dev fee = sqrt(300/x)-2.5, where x = weeks since user has staked
-     * @param _weightedTimestamp The users weightedTimestamp
-     * @return _feeRate where 1% == 1e16
-     */
-    function calcRedemptionFeeRate(uint32 _weightedTimestamp)
+    function totalSupply()
         public
         view
-        returns (uint256 _feeRate)
+        virtual
+        override(HeadlessStakingRewards, ILockedERC20)
+        returns (uint256);
+
+    /**
+     * @dev Simply gets scaled balance
+     * @return scaled balance for user
+     */
+    function balanceOf(address _account)
+        public
+        view
+        virtual
+        override(HeadlessStakingRewards, ILockedERC20)
+        returns (uint256)
     {
-        uint256 weeksStaked = ((block.timestamp - _weightedTimestamp) * 1e18) / ONE_WEEK;
-        if (weeksStaked > 3e18) {
-            // e.g. weeks = 1  = sqrt(300e18) = 17320508075
-            // e.g. weeks = 10 = sqrt(30e18) =   5477225575
-            // e.g. weeks = 26 = sqrt(11.5) =    3391164991
-            _feeRate = Root.sqrt(300e36 / weeksStaked) * 1e7;
-            // e.g. weeks = 1  = 173e15 - 25e15 = 148e15 or 14.8%
-            // e.g. weeks = 10 =  55e15 - 25e15 = 30e15 or 3%
-            // e.g. weeks = 26 =  34e15 - 25e15 = 9e15 or 0.9%
-            _feeRate = _feeRate < 25e15 ? 0 : _feeRate - 25e15;
-        } else {
-            _feeRate = 75e15;
+        return _getBalance(_account, _balances[_account]);
+    }
+
+    /**
+     * @dev Simply gets raw balance
+     * @return raw balance for user
+     */
+    function rawBalanceOf(address _account) public view returns (uint256, uint256) {
+        return (_balances[_account].raw, _balances[_account].cooldownUnits);
+    }
+
+    /**
+     * @dev Scales the balance of a given user by applying multipliers
+     */
+    function _getBalance(address _account, Balance memory _balance)
+        internal
+        view
+        returns (uint256 balance)
+    {
+        // e.g. raw = 1000, questMultiplier = 40, timeMultiplier = 30. Cooldown of 60%
+        // e.g. 1000 * (100 + 40) / 100 = 1400
+        balance = (_balance.raw * (100 + _balance.questMultiplier)) / 100;
+        // e.g. 1400 * (100 + 30) / 100 = 1820
+        balance = (balance * (100 + _balance.timeMultiplier)) / 100;
+
+        if (hasPriceCoeff) {
+            // e.g. 1820 * 16000 / 10000 = 2912
+            balance = (balance * _userPriceCoeff[_account]) / 10000;
         }
     }
 
-    uint256[48] private __gap;
+    /**
+     * @notice Raw staked balance without any multipliers
+     */
+    function balanceData(address _account) external view returns (Balance memory) {
+        return _balances[_account];
+    }
+
+    /**
+     * @notice Raw staked balance without any multipliers
+     */
+    function userPriceCoeff(address _account) external view returns (uint256) {
+        return _userPriceCoeff[_account];
+    }
+
+    /***************************************
+                    QUESTS
+    ****************************************/
+
+    /**
+     * @dev Called by anyone to poke the timestamp of a given account. This allows users to
+     * effectively 'claim' any new timeMultiplier, but will revert if there is no change there.
+     */
+    function reviewTimestamp(address _account) external {
+        _reviewWeightedTimestamp(_account);
+    }
+
+    /**
+     * @dev Adds the multiplier awarded from quest completion to a users data, taking the opportunity
+     * to check time multipliers etc.
+     * @param _account Address of user that should be updated
+     * @param _newMultiplier New Quest Multiplier
+     */
+    function applyQuestMultiplier(address _account, uint8 _newMultiplier)
+        external
+        onlyQuestManager
+    {
+        require(_account != address(0), "Invalid address");
+
+        // 1. Get current balance & update questMultiplier, only if user has a balance
+        Balance memory oldBalance = _balances[_account];
+        uint256 oldScaledBalance = _getBalance(_account, oldBalance);
+        if (oldScaledBalance > 0) {
+            _applyQuestMultiplier(_account, oldBalance, oldScaledBalance, _newMultiplier);
+        }
+    }
+
+    /**
+     * @dev Gets the multiplier awarded for a given weightedTimestamp
+     * @param _ts WeightedTimestamp of a user
+     * @return timeMultiplier Ranging from 20 (0.2x) to 60 (0.6x)
+     */
+    function _timeMultiplier(uint32 _ts) internal view returns (uint8 timeMultiplier) {
+        // If the user has no ts yet, they are not in the system
+        if (_ts == 0) return 0;
+
+        uint256 hodlLength = block.timestamp - _ts;
+        if (hodlLength < 1 days) { //13 weeks) {
+            // 0-3 months = 1x
+            return 0;
+        } else if (hodlLength < 2 days) { //26 weeks) {
+            // 3 months = 1.2x
+            return 20;
+        } else if (hodlLength < 3 days) { //52 weeks) {
+            // 6 months = 1.3x
+            return 30;
+        } else if (hodlLength < 4 days) { //78 weeks) {
+            // 12 months = 1.4x
+            return 40;
+        } else if (hodlLength < 5 days) { //104 weeks) {
+            // 18 months = 1.5x
+            return 50;
+        } else {
+            // > 24 months = 1.6x
+            return 60;
+        }
+    }
+
+    function _getPriceCoeff() internal virtual returns (uint256) {
+        return 10000;
+    }
+
+    /***************************************
+                BALANCE CHANGES
+    ****************************************/
+
+    /**
+     * @dev Adds the multiplier awarded from quest completion to a users data, taking the opportunity
+     * to check time multiplier.
+     * @param _account Address of user that should be updated
+     * @param _newMultiplier New Quest Multiplier
+     */
+    function _applyQuestMultiplier(
+        address _account,
+        Balance memory _oldBalance,
+        uint256 _oldScaledBalance,
+        uint8 _newMultiplier
+    ) private updateRewards(_account) {
+        // 1. Set the questMultiplier
+        _balances[_account].questMultiplier = _newMultiplier;
+
+        // 2. Take the opportunity to set weighted timestamp, if it changes
+        _balances[_account].timeMultiplier = _timeMultiplier(_oldBalance.weightedTimestamp);
+
+        // 3. Update scaled balance
+        _settleScaledBalance(_account, _oldScaledBalance);
+    }
+
+    /**
+     * @dev Entering a cooldown period means a user wishes to withdraw. With this in mind, their balance
+     * should be reduced until they have shown more commitment to the system
+     * @param _account Address of user that should be cooled
+     * @param _units Units to cooldown for
+     */
+    function _enterCooldownPeriod(address _account, uint256 _units)
+        internal
+        updateRewards(_account)
+    {
+        require(_account != address(0), "Invalid address");
+
+        // 1. Get current balance
+        (Balance memory oldBalance, uint256 oldScaledBalance) = _prepareOldBalance(_account);
+        uint88 totalUnits = oldBalance.raw + oldBalance.cooldownUnits;
+        require(_units > 0 && _units <= totalUnits, "Must choose between 0 and 100%");
+
+        // 2. Set weighted timestamp and enter cooldown
+        _balances[_account].timeMultiplier = _timeMultiplier(oldBalance.weightedTimestamp);
+        // e.g. 1e18 / 1e16 = 100, 2e16 / 1e16 = 2, 1e15/1e16 = 0
+        _balances[_account].raw = totalUnits - SafeCastExtended.toUint88(_units);
+
+        // 3. Set cooldown data
+        _balances[_account].cooldownTimestamp = SafeCastExtended.toUint32(block.timestamp);
+        _balances[_account].cooldownUnits = SafeCastExtended.toUint88(_units);
+
+        // 4. Update scaled balance
+        _settleScaledBalance(_account, oldScaledBalance);
+    }
+
+    /**
+     * @dev Exiting the cooldown period explicitly resets the users cooldown window and their balance
+     * @param _account Address of user that should be exited
+     */
+    function _exitCooldownPeriod(address _account) internal updateRewards(_account) {
+        require(_account != address(0), "Invalid address");
+
+        // 1. Get current balance
+        (Balance memory oldBalance, uint256 oldScaledBalance) = _prepareOldBalance(_account);
+
+        // 2. Set weighted timestamp and exit cooldown
+        _balances[_account].timeMultiplier = _timeMultiplier(oldBalance.weightedTimestamp);
+        _balances[_account].raw += oldBalance.cooldownUnits;
+
+        // 3. Set cooldown data
+        _balances[_account].cooldownTimestamp = 0;
+        _balances[_account].cooldownUnits = 0;
+
+        // 4. Update scaled balance
+        _settleScaledBalance(_account, oldScaledBalance);
+    }
+
+    /**
+     * @dev Pokes the weightedTimestamp of a given user and checks if it entitles them
+     * to a better timeMultiplier. If not, it simply reverts as there is nothing to update.
+     * @param _account Address of user that should be updated
+     */
+    function _reviewWeightedTimestamp(address _account) internal updateRewards(_account) {
+        require(_account != address(0), "Invalid address");
+
+        // 1. Get current balance
+        (Balance memory oldBalance, uint256 oldScaledBalance) = _prepareOldBalance(_account);
+
+        // 2. Set weighted timestamp, if it changes
+        uint8 newTimeMultiplier = _timeMultiplier(oldBalance.weightedTimestamp);
+        require(newTimeMultiplier != oldBalance.timeMultiplier, "Nothing worth poking here");
+        _balances[_account].timeMultiplier = newTimeMultiplier;
+
+        // 3. Update scaled balance
+        _settleScaledBalance(_account, oldScaledBalance);
+    }
+
+    /**
+     * @dev Called to mint from raw tokens. Adds raw to a users balance, and then propagates the scaledBalance.
+     * Importantly, when a user stakes more, their weightedTimestamp is reduced proportionate to their stake.
+     * @param _account Address of user to credit
+     * @param _rawAmount Raw amount of tokens staked
+     * @param _exitCooldown Should we end any cooldown?
+     */
+    function _mintRaw(
+        address _account,
+        uint256 _rawAmount,
+        bool _exitCooldown
+    ) internal updateRewards(_account) {
+        require(_account != address(0), "ERC20: mint to the zero address");
+
+        // 1. Get and update current balance
+        (Balance memory oldBalance, uint256 oldScaledBalance) = _prepareOldBalance(_account);
+        uint88 totalRaw = oldBalance.raw + oldBalance.cooldownUnits;
+        _balances[_account].raw = oldBalance.raw + SafeCastExtended.toUint88(_rawAmount);
+
+        // 2. Exit cooldown if necessary
+        if (_exitCooldown) {
+            _balances[_account].raw += oldBalance.cooldownUnits;
+            _balances[_account].cooldownTimestamp = 0;
+            _balances[_account].cooldownUnits = 0;
+        }
+
+        // 3. Set weighted timestamp
+        //  i) For new _account, set up weighted timestamp
+        if (oldBalance.weightedTimestamp == 0) {
+            _balances[_account].weightedTimestamp = SafeCastExtended.toUint32(block.timestamp);
+            _mintScaled(_account, _getBalance(_account, _balances[_account]));
+            return;
+        }
+        //  ii) For previous minters, recalculate time held
+        //      Calc new weighted timestamp
+        uint256 oldWeightedSecondsHeld = (block.timestamp - oldBalance.weightedTimestamp) *
+            totalRaw;
+        uint256 newSecondsHeld = oldWeightedSecondsHeld / (totalRaw + (_rawAmount / 2));
+        uint32 newWeightedTs = SafeCastExtended.toUint32(block.timestamp - newSecondsHeld);
+        _balances[_account].weightedTimestamp = newWeightedTs;
+
+        uint8 timeMultiplier = _timeMultiplier(newWeightedTs);
+        _balances[_account].timeMultiplier = timeMultiplier;
+
+        // 3. Update scaled balance
+        _settleScaledBalance(_account, oldScaledBalance);
+    }
+
+    /**
+     * @dev Called to burn a given amount of raw tokens.
+     * @param _account Address of user
+     * @param _rawAmount Raw amount of tokens to remove
+     * @param _exitCooldown Exit the cooldown?
+     * @param _finalise Has recollateralisation happened? If so, everything is cooled down
+     */
+    function _burnRaw(
+        address _account,
+        uint256 _rawAmount,
+        bool _exitCooldown,
+        bool _finalise
+    ) internal updateRewards(_account) {
+        require(_account != address(0), "ERC20: burn from zero address");
+
+        // 1. Get and update current balance
+        (Balance memory oldBalance, uint256 oldScaledBalance) = _prepareOldBalance(_account);
+        uint256 totalRaw = oldBalance.raw + oldBalance.cooldownUnits;
+        // 1.1. If _finalise, move everything to cooldown
+        if (_finalise) {
+            _balances[_account].raw = 0;
+            _balances[_account].cooldownUnits = SafeCastExtended.toUint88(totalRaw);
+            oldBalance.cooldownUnits = SafeCastExtended.toUint88(totalRaw);
+        }
+        // 1.2. Update
+        require(oldBalance.cooldownUnits >= _rawAmount, "ERC20: burn amount > balance");
+        unchecked {
+            _balances[_account].cooldownUnits -= SafeCastExtended.toUint88(_rawAmount);
+        }
+
+        // 2. If we are exiting cooldown, reset the balance
+        if (_exitCooldown) {
+            _balances[_account].raw += _balances[_account].cooldownUnits;
+            _balances[_account].cooldownTimestamp = 0;
+            _balances[_account].cooldownUnits = 0;
+        }
+
+        // 3. Set back scaled time
+        // e.g. stake 10 for 100 seconds, withdraw 5.
+        //      secondsHeld = (100 - 0) * (10 - 0.625) = 937.5
+        uint256 secondsHeld = (block.timestamp - oldBalance.weightedTimestamp) *
+            (totalRaw - (_rawAmount / 8));
+        //      newWeightedTs = 937.5 / 100 = 93.75
+        uint256 newSecondsHeld = secondsHeld / totalRaw;
+        uint32 newWeightedTs = SafeCastExtended.toUint32(block.timestamp - newSecondsHeld);
+        _balances[_account].weightedTimestamp = newWeightedTs;
+
+        uint8 timeMultiplier = _timeMultiplier(newWeightedTs);
+        _balances[_account].timeMultiplier = timeMultiplier;
+
+        // 4. Update scaled balance
+        _settleScaledBalance(_account, oldScaledBalance);
+    }
+
+    /***************************************
+                    PRIVATE
+    updateReward should already be called by now
+    ****************************************/
+
+    /**
+     * @dev Fetches the balance of a given user, scales it, and also takes the opportunity
+     * to check if the season has just finished between now and their last action.
+     * @param _account Address of user to fetch
+     * @return oldBalance struct containing all balance information
+     * @return oldScaledBalance scaled balance after applying multipliers
+     */
+    function _prepareOldBalance(address _account)
+        private
+        returns (Balance memory oldBalance, uint256 oldScaledBalance)
+    {
+        // Get the old balance
+        oldBalance = _balances[_account];
+        oldScaledBalance = _getBalance(_account, oldBalance);
+        // Take the opportunity to check for season finish
+        _balances[_account].questMultiplier = questManager.checkForSeasonFinish(_account);
+        if (hasPriceCoeff) {
+            _userPriceCoeff[_account] = SafeCastExtended.toUint16(_getPriceCoeff());
+        }
+    }
+
+    /**
+     * @dev Settles the scaled balance of a given account. The reason this is done here, is because
+     * in each of the write functions above, there is the chance that a users balance can go down,
+     * requiring to burn sacled tokens. This could happen at the end of a season when multipliers are slashed.
+     * This is called after updating all multipliers etc.
+     * @param _account Address of user that should be updated
+     * @param _oldScaledBalance Previous scaled balance of the user
+     */
+    function _settleScaledBalance(address _account, uint256 _oldScaledBalance) private {
+        uint256 newScaledBalance = _getBalance(_account, _balances[_account]);
+        if (newScaledBalance > _oldScaledBalance) {
+            _mintScaled(_account, newScaledBalance - _oldScaledBalance);
+        }
+        // This can happen if the user moves back a time class, but is unlikely to result in a negative mint
+        else {
+            _burnScaled(_account, _oldScaledBalance - newScaledBalance);
+        }
+    }
+
+    /**
+     * @dev Propagates the minting of the tokens downwards.
+     * @param _account Address of user that has minted
+     * @param _amount Amount of scaled tokens minted
+     */
+    function _mintScaled(address _account, uint256 _amount) private {
+        emit Transfer(address(0), _account, _amount);
+
+        _afterTokenTransfer(address(0), _account, _amount);
+    }
+
+    /**
+     * @dev Propagates the burning of the tokens downwards.
+     * @param _account Address of user that has burned
+     * @param _amount Amount of scaled tokens burned
+     */
+    function _burnScaled(address _account, uint256 _amount) private {
+        emit Transfer(_account, address(0), _amount);
+
+        _afterTokenTransfer(_account, address(0), _amount);
+    }
+
+    /***************************************
+                    HOOKS
+    ****************************************/
+
+    /**
+     * @dev Triggered after a user claims rewards from the HeadlessStakingRewards. Used
+     * to check for season finish. If it has not, then do not spend gas updating the other vars.
+     * @param _account Address of user that has burned
+     */
+    function _claimRewardHook(address _account) internal override {
+        uint8 newMultiplier = questManager.checkForSeasonFinish(_account);
+        bool priceCoeffChanged = hasPriceCoeff
+            ? _getPriceCoeff() != _userPriceCoeff[_account]
+            : false;
+        if (newMultiplier != _balances[_account].questMultiplier || priceCoeffChanged) {
+            // 1. Get current balance & trigger season finish
+            uint256 oldScaledBalance = _getBalance(_account, _balances[_account]);
+            _balances[_account].questMultiplier = newMultiplier;
+            if (priceCoeffChanged) {
+                _userPriceCoeff[_account] = SafeCastExtended.toUint16(_getPriceCoeff());
+            }
+            // 3. Update scaled balance
+            _settleScaledBalance(_account, oldScaledBalance);
+        }
+    }
+
+    /**
+     * @dev Unchanged from OpenZeppelin. Used in child contracts to react to any balance changes.
+     */
+    function _afterTokenTransfer(
+        address _from,
+        address _to,
+        uint256 _amount
+    ) internal virtual {}
+
+    /***************************************
+                    Utils
+    ****************************************/
+
+    function bytes32ToString(bytes32 _bytes32) internal pure returns (string memory) {
+        uint256 i = 0;
+        while (i < 32 && _bytes32[i] != 0) {
+            i++;
+        }
+        bytes memory bytesArray = new bytes(i);
+        for (i = 0; i < 32 && _bytes32[i] != 0; i++) {
+            bytesArray[i] = _bytes32[i];
+        }
+        return string(bytesArray);
+    }
+
+    uint256[46] private __gap;
 }

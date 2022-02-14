@@ -7,7 +7,7 @@ import { SignatureVerifier } from "./deps/SignatureVerifier.sol";
 import { ImmutableModule } from "../../shared/ImmutableModule.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { IQuestManager } from "./interfaces/IQuestManager.sol";
-import { IStakedToken } from "./interfaces/IStakedToken.sol";
+import { IxEmbr } from "./interfaces/IxEmbr.sol";
 import "./deps/xEmbrStructs.sol";
 
 /**
@@ -253,7 +253,7 @@ contract QuestManager is IQuestManager, Initializable, ContextUpgradeable, Immut
 
         uint256 len2 = _stakedTokens.length;
         for (uint256 i = 0; i < len2; i++) {
-            IStakedToken(_stakedTokens[i]).applyQuestMultiplier(_account, questMultiplier);
+            IxEmbr(_stakedTokens[i]).applyQuestMultiplier(_account, questMultiplier);
         }
 
         emit QuestCompleteQuests(_account, _ids);
@@ -301,7 +301,7 @@ contract QuestManager is IQuestManager, Initializable, ContextUpgradeable, Immut
 
             uint256 len2 = _stakedTokens.length;
             for (uint256 j = 0; j < len2; j++) {
-                IStakedToken(_stakedTokens[j]).applyQuestMultiplier(_accounts[i], questMultiplier);
+                IxEmbr(_stakedTokens[j]).applyQuestMultiplier(_accounts[i], questMultiplier);
             }
         }
 

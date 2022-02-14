@@ -31,25 +31,21 @@ abstract contract HeadlessStakingRewards is
     using StableMath for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
-
     /// @notice tokens the rewards are distributed in.
     IERC20[] public rewardTokens;
     IERC20 public immutable embr;
 
     // Constants
-    uint256 public maxActiveRewardTokens = 10;
+    uint256 private constant maxActiveRewardTokens = 10;
     uint256 private constant WEEK = 7 days;
     uint256 private constant redemptionIndex = 2**256 - 1;
 
     /// @notice List of tokens supported by the protocol
     EnumerableSet.AddressSet private rewardTokenAddresses;
-    uint256 public activeTokenCount = 0;
+    uint256 public override activeTokenCount = 0; 
 
     /// @notice length of each staking period in seconds. 7 days = 604,800; 3 months = 7,862,400
     uint256 public constant DURATION = 1 weeks;
-
-    /// @notice contract that holds the platform tokens
-    address public rewardTokenVendor;
 
     struct Data {
         /// Timestamp for current period finish
@@ -57,15 +53,15 @@ abstract contract HeadlessStakingRewards is
         /// Last time any user took action
         uint32 lastUpdateTime;
         /// RewardRate for the rest of the period
-        uint96 rewardRate;
+        uint256 rewardRate;
         /// Ever increasing rewardPerToken rate, based on % of total supply
-        uint96 rewardPerTokenStored;
+        uint256 rewardPerTokenStored;
     }
 
     struct UserData {
-        uint128 rewardPerTokenPaid;
-        uint128 rewards;
-        uint128 rewardsPaid;
+        uint256 rewardPerTokenPaid;
+        uint256 rewards;
+        uint256 rewardsPaid;
     }
 
     struct RewardInfo { 
@@ -88,28 +84,11 @@ abstract contract HeadlessStakingRewards is
 
     /**
      * @param _fulcrum mStable system Fulcrum address
-     * @param _rewardsToken first token that is being distributed as a reward. eg MTA
      */
-    constructor(address _fulcrum, address _rewardsToken, address _embrAddress)
+    constructor(address _fulcrum, address _embrAddress)
         InitializableRewardsDistributionRecipient(_fulcrum)
     {
         embr = IERC20(_embrAddress);
-
-        IERC20 feeToken = IERC20(_rewardTokens);
-        rewardTokens.push(feeToken);
-        RewardInfo memory init = RewardInfo({
-            current: rewardTokens.length,
-            last: 0,
-            expiry: 0
-        });
-
-        activeRewardInfo.add(init);
-        rewardTokenAddresses.add(_rewardTokens);
-
-        emit LogTokenAddition(
-            rewardTokens.length,
-            _rewardTokens
-        );
     }
 
     /**
@@ -120,7 +99,6 @@ abstract contract HeadlessStakingRewards is
      */
     function _initialize(address _rewardsDistributorArg) internal virtual override {
         InitializableRewardsDistributionRecipient._initialize(_rewardsDistributorArg);
-        rewardTokenVendor = PlatformTokenVendorFactory.create(REWARDS_TOKEN);
     }
 
     /**
@@ -128,6 +106,7 @@ abstract contract HeadlessStakingRewards is
      */
     function add(address _rewardTokens) 
         external 
+        override
         onlyRewardsDistributor 
     {
         require(
@@ -135,7 +114,7 @@ abstract contract HeadlessStakingRewards is
             "add: Reward Token already added"
         );
         require(
-            activeTokenCount < maxActiveRewardTokens, 
+            activeTokenCount < 10, 
             "add: Max tokens"
         );
 
@@ -143,12 +122,12 @@ abstract contract HeadlessStakingRewards is
         
         rewardTokens.push(feeToken);
         RewardInfo memory init = RewardInfo({
-            current: rewardTokens.length,
+            current: rewardTokens.length - 1,
             last: 0,
             expiry: 0
         });
 
-        activeRewardInfo.push(init);
+        activeRewardInfo[rewardTokens.length - 1] = init;
         rewardTokenAddresses.add(_rewardTokens);
         activeTokenCount++;
         
@@ -163,11 +142,15 @@ abstract contract HeadlessStakingRewards is
      *      Adds to rewardTokens index if doesn't exist, otherwise
      *      reuses expires token
      */
-    function update(
+    function update( 
         uint256 _id, 
         address _rewardToken,
         uint256 _index
-    ) external onlyRewardsDistributor {
+    ) 
+        external 
+        override 
+        onlyRewardsDistributor 
+    {
         RewardInfo memory rToken = activeRewardInfo[_id];
         uint256 currentTime = block.timestamp;
         
@@ -208,6 +191,7 @@ abstract contract HeadlessStakingRewards is
 
     /** @dev Updates the rewards for a given address, before executing function */
     modifier updateRewards(address _account) {
+        _updateReward(redemptionIndex, _account);
         for(uint256 i = 0; i < activeTokenCount; i++) {
             _updateReward(i, _account);
         }
@@ -220,14 +204,15 @@ abstract contract HeadlessStakingRewards is
         (uint256 newRewardPerToken, uint256 lastApplicableTime) = _rewardPerToken(currentIndex);
         // If statement protects against loss in initialisation case
         if (newRewardPerToken > 0) {
-            globalData[currentIndex].rewardPerTokenStored = SafeCast.toUint96(newRewardPerToken);
+            globalData[currentIndex].rewardPerTokenStored = newRewardPerToken;
             globalData[currentIndex].lastUpdateTime = SafeCast.toUint32(lastApplicableTime);
 
             // Setting of personal vars based on new globals
             if (_account != address(0)) {
                 userData[currentIndex][_account] = UserData({
-                    rewardPerTokenPaid: SafeCast.toUint128(newRewardPerToken),
-                    rewards: SafeCast.toUint128(_earned(currentIndex, _account, newRewardPerToken))
+                    rewardPerTokenPaid: newRewardPerToken,
+                    rewards: _earned(currentIndex, _account, newRewardPerToken),
+                    rewardsPaid: userData[currentIndex][_account].rewardsPaid
                 });
 
             }
@@ -242,7 +227,7 @@ abstract contract HeadlessStakingRewards is
      * @dev Claims outstanding rewards for the sender.
      * First updates outstanding reward allocation and then transfers.
      */
-    function claimReward(uint256 _tid, address _to) public nonReentrant {
+    function claimReward(uint256 _tid, address _to) public {
         _claimReward(_tid, _to);
     }
 
@@ -250,7 +235,7 @@ abstract contract HeadlessStakingRewards is
      * @dev Claims outstanding rewards for the sender.
      * First updates outstanding reward allocation and then transfers.
      */
-    function claimReward(uint256 _tid) public nonReentrant {
+     function claimReward(uint256 _tid) public {
         _claimReward(_tid, _msgSender());
     }
 
@@ -258,7 +243,7 @@ abstract contract HeadlessStakingRewards is
      * @dev Claims outstanding rewards for the sender.
      * First updates outstanding reward allocation and then transfers.
      */
-    function claimRedemptionReward() public nonReentrant {
+    function claimRedemptionReward() public {
         _claimRedemptionRewards(_msgSender());
     }
 
@@ -266,7 +251,7 @@ abstract contract HeadlessStakingRewards is
      * @dev Claims outstanding rewards for the sender.
      * First updates outstanding reward allocation and then transfers.
      */
-    function claimExpiredReward(uint256 _tid) public nonReentrant {
+    function claimExpiredReward(uint256 _tid) public {
         _claimExpiredReward(_tid, _msgSender());
     }
 
@@ -275,8 +260,7 @@ abstract contract HeadlessStakingRewards is
      * First updates outstanding reward allocation and then transfers.
      */
     function claimRewards() 
-        public 
-        nonReentrant 
+        public  
         updateRewards(_msgSender()) 
     {
         _claimRewards(_msgSender());
@@ -303,26 +287,27 @@ abstract contract HeadlessStakingRewards is
         (uint256 newRewardPerToken, uint256 lastApplicableTime) = _rewardPerToken(currentIndex);
         // If statement protects against loss in initialisation case
         if (newRewardPerToken > 0) {
-            globalData[currentIndex].rewardPerTokenStored = SafeCast.toUint96(newRewardPerToken);
+            globalData[currentIndex].rewardPerTokenStored = newRewardPerToken;
             globalData[currentIndex].lastUpdateTime = SafeCast.toUint32(lastApplicableTime);
 
             // Setting of personal vars based on new globals
             if (sender != address(0)) {
                 userData[currentIndex][sender] = UserData({
-                    rewardPerTokenPaid: SafeCast.toUint128(newRewardPerToken),
-                    rewards: SafeCast.toUint128(_earned(currentIndex, sender, newRewardPerToken))
+                    rewardPerTokenPaid: newRewardPerToken,
+                    rewards: _earned(currentIndex, sender, newRewardPerToken),
+                    rewardsPaid: userData[currentIndex][sender].rewardsPaid
                 });
 
             }
         }
 
-        uint256 reward = userData[currentIndex][_msgSender()].reward;
+        uint256 reward = userData[currentIndex][sender].rewards;
         if (reward > 0) {
-            userData[currentIndex][_msgSender()].rewards = 0;
+            userData[currentIndex][sender].rewards = 0;
             embr.safeTransfer(sender, reward);
-            userData[currentIndex][_msgSender()].rewardsPaid =  userData[currentIndex][_msgSender()].rewardsPaid + reward;
+            userData[currentIndex][sender].rewardsPaid =  userData[currentIndex][sender].rewardsPaid + reward;
 
-            emit RewardPaid(sender, address(rewardTokens[currentIndex]), reward);
+            emit RewardPaid(sender, sender, address(rewardTokens[currentIndex]), reward);
         }     
     }
 
@@ -334,19 +319,19 @@ abstract contract HeadlessStakingRewards is
             embr.safeTransfer(_to, redemptionReward);
             userData[redemptionIndex][_msgSender()].rewardsPaid =  userData[redemptionIndex][_msgSender()].rewardsPaid + redemptionReward;
 
-            emit RewardPaid(_to, address(embr), redemptionReward);
+            emit RewardPaid(_to, _to, address(embr), redemptionReward);
         }
     }
 
     function _claimReward(uint256 _tid, address _to) internal updateReward(_tid, _msgSender()) {
-        uint128 reward = userData[_tid][_msgSender()].rewards;
+        uint256 reward = userData[_tid][_msgSender()].rewards;
         uint256 currentIndex = _tid == redemptionIndex ? redemptionIndex : activeRewardInfo[_tid].current;
         if (reward > 0) {
             userData[currentIndex][_msgSender()].rewards = 0;
             rewardTokens[currentIndex].safeTransfer(_to, reward);
             userData[currentIndex][_msgSender()].rewardsPaid =  userData[currentIndex][_msgSender()].rewardsPaid + reward;
 
-            emit RewardPaid(_to, address(rewardTokens[currentIndex]), reward);
+            emit RewardPaid(_to, _to,address(rewardTokens[currentIndex]), reward);
         }
         _claimRewardHook(_msgSender());
     }
@@ -358,16 +343,20 @@ abstract contract HeadlessStakingRewards is
     /**
      * @dev Gets the RewardsToken
      */
-    function getActiveIndex(uint256 _tid) external view returns (uint256) {
+    function getActiveIndex(uint256 _tid) external view override returns (uint256) {
         return activeRewardInfo[_tid].current;
     }
 
     /**
      * @dev Gets the RewardsToken
      */
-    function getRewardToken(uint256 _tid) external view returns (IERC20 memory) {
+    function getRewardToken(uint256 _tid) external view override returns (IERC20) {
         return rewardTokens[_tid];
     }
+
+    //function getRewardToken() external view override returns (IERC20) {
+    //    return REWARDS_TOKEN;
+    //}
 
     /**
      * @dev Gets the last applicable timestamp for this reward period
@@ -380,7 +369,7 @@ abstract contract HeadlessStakingRewards is
     /**
      * @dev Gets the last applicable timestamp for this reward period
      */
-    function _lastTimeRewardApplicable(uint256 _tid, uint32 _periodFinish) internal view returns (uint256) {
+    function _lastTimeRewardApplicable(uint32 _periodFinish) internal view returns (uint256) {
         return StableMath.min(block.timestamp, _periodFinish);
     }
 
@@ -401,7 +390,7 @@ abstract contract HeadlessStakingRewards is
         returns (uint256 rewardPerToken_, uint256 lastTimeRewardApplicable_)
     {
         Data memory data = globalData[_tid];
-        uint256 lastApplicableTime = _lastTimeRewardApplicable(_tid, data.periodFinish); // + 1 SLOAD
+        uint256 lastApplicableTime = _lastTimeRewardApplicable(data.periodFinish); // + 1 SLOAD
 
         uint256 timeDelta = lastApplicableTime - data.lastUpdateTime; // + 1 SLOAD
         // If this has been called twice in the same block, shortcircuit to reduce gas
@@ -476,6 +465,7 @@ abstract contract HeadlessStakingRewards is
     {
         uint256 currentTime = block.timestamp;
         uint256 currentIndex = _tid;
+        require(_tid + 1 <= rewardTokens.length, "Outside of index");
 
         // Pay and reset the pendingAdditionalRewards
         if (pendingAdditionalReward[currentIndex] > 1) {
@@ -485,13 +475,13 @@ abstract contract HeadlessStakingRewards is
 
         // If previous period over, reset rewardRate
         if (currentTime >= globalData[currentIndex].periodFinish) {
-            globalData[currentIndex].rewardRate = SafeCast.toUint96(_reward / DURATION);
+            globalData[currentIndex].rewardRate = _reward / DURATION;
         }
         // If additional reward to existing period, calc sum
         else {
             uint256 remainingSeconds = globalData[currentIndex].periodFinish - currentTime;
             uint256 leftover = remainingSeconds * globalData[currentIndex].rewardRate;
-            globalData.rewardRate = SafeCast.toUint96((_reward + leftover) / DURATION);
+            globalData[currentIndex].rewardRate = (_reward + leftover) / DURATION;
         }
 
         globalData[currentIndex].lastUpdateTime = SafeCast.toUint32(currentTime);
@@ -504,6 +494,7 @@ abstract contract HeadlessStakingRewards is
     /**
      * @dev Called by the child contract to notify of any additional rewards that have accrued.
      *      Trusts that this is called honestly.
+     * @param _tid token index of additional rewards
      * @param _additionalReward Units of additional RewardToken to add at the next notification
      */
     function _notifyAdditionalReward(uint256 _tid, uint256 _additionalReward) internal virtual {
