@@ -1,8 +1,8 @@
 {
-    "name": "@mstable/protocol",
+    "name": "@embrfinance/protocol",
     "version": "2.4.0",
-    "description": "mStable Contracts",
-    "author": "mStable <info@mstable.org>",
+    "description": "Embr Finance Contracts",
+    "author": "Embr Finance <info@embr,finance>",
     "license": "AGPL-3.0-or-later",
     "directories": {
         "test": "test"
@@ -42,7 +42,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/mstable/mstable-contracts.git"
+        "url": "git+https://github.com/embrfinance/xEmbr.git"
     },
     "devDependencies": {
         "@commitlint/cli": "^12.1.1",

@@ -6,6 +6,8 @@ export enum Chain {
     polygon,
     ropsten,
     mumbai,
+    avalanche, 
+    fuji
 }
 
 export enum Platform {
