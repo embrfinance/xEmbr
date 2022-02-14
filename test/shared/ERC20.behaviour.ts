@@ -1,18 +1,15 @@
 import { expect } from "chai"
 
 import { BN } from "@utils/math"
-import { MassetMachine, MassetDetails } from "@utils/machines"
 import { ZERO_ADDRESS } from "@utils/constants"
 import { ERC20 } from "types/generated"
 import { Account, EthAddress } from "types"
 
 export interface IERC20BehaviourContext {
     token: ERC20
-    mAssetMachine: MassetMachine
     initialHolder: Account
     recipient: Account
     anotherAccount: Account
-    details: MassetDetails
 }
 
 const shouldBehaveLikeERC20Transfer = (

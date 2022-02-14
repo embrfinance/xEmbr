@@ -1,7 +1,7 @@
 import { StandardAccounts } from "@utils/machines"
 import { expect } from "chai"
 import { ZERO_ADDRESS } from "@utils/constants"
-import { INexus__factory, ImmutableModule } from "types/generated"
+import { IFulcrum__factory, ImmutableModule } from "types/generated"
 
 export interface IModuleBehaviourContext {
     module: ImmutableModule
@@ -9,17 +9,17 @@ export interface IModuleBehaviourContext {
 }
 
 export function shouldBehaveLikeModule(ctx: IModuleBehaviourContext): void {
-    it("should have Nexus", async () => {
-        const nexusAddr = await ctx.module.nexus()
-        expect(nexusAddr).to.not.equal(ZERO_ADDRESS)
+    it("should have Fulcrum", async () => {
+        const fulcrumAddr = await ctx.module.fulcrum()
+        expect(fulcrumAddr).to.not.equal(ZERO_ADDRESS)
     })
 
     it("should have Governor address", async () => {
-        const nexusAddr = await ctx.module.nexus()
-        const nexus = await INexus__factory.connect(nexusAddr, ctx.sa.default.signer)
+        const fulcrumAddr = await ctx.module.fulcrum()
+        const fulcrum = await IFulcrum__factory.connect(fulcrumAddr, ctx.sa.default.signer)
 
-        const nexusGovernor = await nexus.governor()
-        expect(nexusGovernor).to.equal(ctx.sa.governor.address)
+        const fulcrumGovernor = await fulcrum.governor()
+        expect(fulcrumGovernor).to.equal(ctx.sa.governor.address)
     })
 }
 

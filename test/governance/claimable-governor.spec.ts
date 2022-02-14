@@ -1,7 +1,7 @@
 import { ethers } from "hardhat"
 import { expect } from "chai"
 
-import { MassetMachine } from "@utils/machines"
+import { xEmbrMachine } from "@utils/machines"
 import { ClaimableGovernor__factory } from "types/generated"
 import { shouldBehaveLikeClaimable, IClaimableGovernableBehaviourContext } from "./ClaimableGovernor.behaviour"
 
@@ -10,7 +10,7 @@ describe("ClaimableGovernable", () => {
 
     beforeEach("Create Contract", async () => {
         const accounts = await ethers.getSigners()
-        const mAssetMachine = await new MassetMachine().initAccounts(accounts)
+        const mAssetMachine = await new xEmbrMachine().initAccounts(accounts)
         ctx.default = mAssetMachine.sa.default
         ctx.governor = mAssetMachine.sa.governor
         ctx.other = mAssetMachine.sa.other
@@ -24,7 +24,7 @@ describe("ClaimableGovernable", () => {
 
         beforeEach(async () => {
             const accounts = await ethers.getSigners()
-            const mAssetMachine = await new MassetMachine().initAccounts(accounts)
+            const mAssetMachine = await new xEmbrMachine().initAccounts(accounts)
             newOwner = mAssetMachine.sa.other
             await ctx.claimable.connect(mAssetMachine.sa.governor.signer).requestGovernorChange(newOwner.address)
         })

@@ -38,14 +38,6 @@ export class StandardAccounts {
 
     public questSigner: Account
 
-    public mockSavingsManager: Account
-
-    public mockInterestValidator: Account
-
-    public mockRecollateraliser: Account
-
-    public mockMasset: Account
-
     public mockRewardsDistributor: Account
 
     public keeper: Account
@@ -72,10 +64,6 @@ export class StandardAccounts {
             this.fundManager2,
             this.questMaster,
             this.questSigner,
-            this.mockSavingsManager,
-            this.mockInterestValidator,
-            this.mockRecollateraliser,
-            this.mockMasset,
             this.mockRewardsDistributor,
             this.keeper,
         ] = this.all
