@@ -74,9 +74,9 @@ export const getChainAddress = (contractName: ContractNames, chain: Chain): stri
     } else if (chain === Chain.fuji) {
         switch (contractName) {
             case "Fulcrum":
-                return "0x7DCad6dd2D16A30B9A89181CC2AEfc547377fb9C"
+                return "0x1E1Af9Ad8b97ad413B5bBFbda4cDC1A205FFcc20"
             case "DelayedProxyAdmin":
-                return "0xAA0068Db1a70623CA84480fbba490Ee28fe7ba95"
+                return "0x3aDa94788320C871e238BD18601338B557Ff86b0"
             case "ProxyAdmin":
                 return "0xFEb06159e2d3AC37f8B5c609A04B94dc6E11982f"
             case "ProtocolDAO":
@@ -85,7 +85,7 @@ export const getChainAddress = (contractName: ContractNames, chain: Chain): stri
             case "FundManager":
                 return "0xFEb06159e2d3AC37f8B5c609A04B94dc6E11982f"
             case "RewardsDistributor":
-                return "0xF32A2643bd905d6C2529098369F92EB5D83936a1"
+                return "0xF186f25e5e95F9ee8A543497aB2a9c76e8a16B59"
             case "VoterProxy":
                 return "0x10D96b1Fd46Ce7cE092aA905274B8eD9d4585A6E"
             case "QuestMaster":
@@ -93,9 +93,9 @@ export const getChainAddress = (contractName: ContractNames, chain: Chain): stri
             case "QuestSigner":
                 return "0xFEb06159e2d3AC37f8B5c609A04B94dc6E11982f"
             case "SignatureVerifier":
-                return "0x922e11B60315307DBbAf0971E1a1E6A016E769aE"
+                return "0x490020b534aeD64feEec4D59Fcbe566C356F5175"
             case "QuestManager":
-                return "0xB3D1ed6d348f8816b40aCa7476D00fE6f923E982"
+                return "0xB1462d2C7C754Fa2527aBf07907b0a3d0cB646C1"
             case "OperationsSigner":
                 return "0xFEb06159e2d3AC37f8B5c609A04B94dc6E11982f"
             case "VotiumBribe":
@@ -103,7 +103,7 @@ export const getChainAddress = (contractName: ContractNames, chain: Chain): stri
             case "VotiumForwarder":
                 return "0xb6d519a0D616f6F5Fac2b1dBC5bcb92ea58EDa4a"
             case "xEmbrToken":
-                return "0x277230592cf3C552cEfb7138a0d247079524B734"
+                return "0xd91cb6c5b14C2308541b9147130eCeb1F6d60682"
             default:
         }
     }
