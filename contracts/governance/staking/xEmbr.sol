@@ -210,19 +210,19 @@ abstract contract xEmbr is
         if (_ts == 0) return 0;
 
         uint256 hodlLength = block.timestamp - _ts;
-        if (hodlLength < 1 days) { //13 weeks) {
+        if (hodlLength < 13 weeks) {
             // 0-3 months = 1x
             return 0;
-        } else if (hodlLength < 2 days) { //26 weeks) {
+        } else if (hodlLength < 26 weeks) {
             // 3 months = 1.2x
             return 20;
-        } else if (hodlLength < 3 days) { //52 weeks) {
+        } else if (hodlLength < 52 weeks) {
             // 6 months = 1.3x
             return 30;
-        } else if (hodlLength < 4 days) { //78 weeks) {
+        } else if (hodlLength < 78 weeks) {
             // 12 months = 1.4x
             return 40;
-        } else if (hodlLength < 5 days) { //104 weeks) {
+        } else if (hodlLength < 104 weeks) {
             // 18 months = 1.5x
             return 50;
         } else {

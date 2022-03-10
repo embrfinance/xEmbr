@@ -12,6 +12,8 @@ interface IRewardsDistributionRecipient {
 
     function activeTokenCount() external view returns (uint256);
 
+    function pendingAdditionalReward(uint256 _tid) external view returns (uint256);
+
     function add(address _rewardTokens) external;
 
     function update( uint256 _id, address _rewardToken, uint256 _index) external;
