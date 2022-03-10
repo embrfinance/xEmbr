@@ -74,7 +74,7 @@ abstract contract HeadlessStakingRewards is
     mapping(uint256 => RewardInfo) public activeRewardInfo;
     mapping(uint256 => Data) public globalData;
     mapping(uint256 => mapping(address => UserData)) public userData;
-    mapping(uint256 => uint256) public pendingAdditionalReward;
+    mapping(uint256 => uint256) public override pendingAdditionalReward;
 
     event RewardAdded(uint256 reward, address indexed rewardToken);
     event RewardPaid(address indexed user, address indexed to, address indexed rewardToken, uint256 reward);
@@ -132,7 +132,7 @@ abstract contract HeadlessStakingRewards is
         activeTokenCount++;
         
         emit LogTokenAddition(
-            rewardTokens.length,
+            rewardTokens.length - 1,
             _rewardTokens
         );
     }
@@ -312,7 +312,7 @@ abstract contract HeadlessStakingRewards is
     }
 
 
-    function _claimRedemptionRewards(address _to) private { 
+    function _claimRedemptionRewards(address _to) internal updateReward(redemptionIndex, _msgSender()) { 
         uint256 redemptionReward = userData[redemptionIndex][_msgSender()].rewards;
         if (redemptionReward > 0) {
             userData[redemptionIndex][_msgSender()].rewards = 0;
@@ -464,30 +464,31 @@ abstract contract HeadlessStakingRewards is
         updateReward(_tid, address(0))
     {
         uint256 currentTime = block.timestamp;
-        uint256 currentIndex = _tid;
-        require(_tid + 1 <= rewardTokens.length, "Outside of index");
+        if(_tid != redemptionIndex) {
+            require(_tid + 1 <= rewardTokens.length, "Outside of index");
+        }
 
         // Pay and reset the pendingAdditionalRewards
-        if (pendingAdditionalReward[currentIndex] > 1) {
-            _reward += (pendingAdditionalReward[currentIndex] - 1);
-            pendingAdditionalReward[currentIndex] = 1;
+        if (pendingAdditionalReward[_tid] > 1) {
+            _reward += (pendingAdditionalReward[_tid] - 1);
+            pendingAdditionalReward[_tid] = 1;
         }
 
         // If previous period over, reset rewardRate
-        if (currentTime >= globalData[currentIndex].periodFinish) {
-            globalData[currentIndex].rewardRate = _reward / DURATION;
+        if (currentTime >= globalData[_tid].periodFinish) {
+            globalData[_tid].rewardRate = _reward / DURATION;
         }
         // If additional reward to existing period, calc sum
         else {
-            uint256 remainingSeconds = globalData[currentIndex].periodFinish - currentTime;
-            uint256 leftover = remainingSeconds * globalData[currentIndex].rewardRate;
-            globalData[currentIndex].rewardRate = (_reward + leftover) / DURATION;
+            uint256 remainingSeconds = globalData[_tid].periodFinish - currentTime;
+            uint256 leftover = remainingSeconds * globalData[_tid].rewardRate;
+            globalData[_tid].rewardRate = (_reward + leftover) / DURATION;
         }
 
-        globalData[currentIndex].lastUpdateTime = SafeCast.toUint32(currentTime);
-        globalData[currentIndex].periodFinish = SafeCast.toUint32(currentTime + DURATION);
+        globalData[_tid].lastUpdateTime = SafeCast.toUint32(currentTime);
+        globalData[_tid].periodFinish = SafeCast.toUint32(currentTime + DURATION);
 
-        address rewardTknAddress = _tid == redemptionIndex ? address(embr) : address(rewardTokens[currentIndex]);
+        address rewardTknAddress = _tid == redemptionIndex ? address(embr) : address(rewardTokens[_tid]);
         emit RewardAdded(_reward, rewardTknAddress);
     }
 
