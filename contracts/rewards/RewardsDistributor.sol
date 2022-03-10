@@ -31,7 +31,8 @@ contract RewardsDistributor is ImmutableModule {
 
     event AddedFundManager(address indexed _address);
     event AddedTeamManager(address indexed _address);
-    event AddedTreasuaryManager(address indexed _address);
+    event AddedTreasuaryManager(uint256 _address);
+    event UpdatePayoutPercentages(uint256 teamPct, uint256 fundPct, uint256 treasuaryPct);
 
     event RemovedFundManager(address indexed _address);
     event RemovedTeamManager(address indexed _address);
@@ -264,6 +265,28 @@ contract RewardsDistributor is ImmutableModule {
         _recipient.add(_rewardToken);
     }
 
+
+
+    /**
+     * @dev Distributes tokens to team
+     * of the transfer. Only callable by FundManagers
+     * @param _recipient   address of rewards recipient to add new reward token to
+     * @param _rewardToken  Address of the reward token to add
+     * @param _index  Index if alreayd existing token
+     */
+    function distrubutePendingReward(
+        IRewardsDistributionRecipient _recipient,
+        address _rewardToken,
+        uint256 _index
+    ) external onlyFundManager { 
+        IRewardsDistributionRecipient recipient = _recipient;
+
+        uint256 pending = recipient.pendingAdditionalReward(_index);
+        if (pending > 0) { 
+            recipient.notifyRewardAmount(_index, 0);
+        }
+    }
+
     /**
      * @dev Distributes tokens to team
      * of the transfer. Only callable by FundManagers
@@ -296,9 +319,9 @@ contract RewardsDistributor is ImmutableModule {
         require(len == _amounts.length, "Mismatching inputs");
         IRewardsDistributionRecipient recipient = _recipient;
         for (uint256 i = 0; i < len; i++) {
-            IERC20 rewardToken =  recipient.getRewardToken(i);
+            IERC20 rewardToken =  recipient.getRewardToken(_indexes[i]);
             rewardToken.safeTransferFrom(msg.sender, address(recipient), _amounts[i]);
-            recipient.notifyRewardAmount(i, _amounts[i]);
+            recipient.notifyRewardAmount(_indexes[i], _amounts[i]);
 
             emit DistributedReward(
                 address(recipient),
@@ -348,4 +371,21 @@ contract RewardsDistributor is ImmutableModule {
             }
         }
     }
+
+     /**
+     * @dev Set payout distrubution percentages
+     * @param _teamPct Team fund percentage
+     * @param _fundPct xEmbr fund percentage
+     * @param _treasuaryPct Treasuary fund percentage
+     */
+    function setPayoutDistrubution(uint256 _teamPct, uint256 _fundPct, uint256 _treasuaryPct) external onlyFundManager {
+        require(_teamPct + _fundPct + _treasuaryPct == 1000, "Distrubtion percent is not 1000");
+
+        teamPct = _teamPct; 
+        fundPct = _fundPct;
+        treasuaryPct = _treasuaryPct;
+
+        emit UpdatePayoutPercentages(teamPct, fundPct, treasuaryPct);
+    }
+
 }

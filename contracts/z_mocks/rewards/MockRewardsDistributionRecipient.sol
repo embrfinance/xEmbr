@@ -48,6 +48,15 @@ contract MockRewardsDistributionRecipient is
         return _tid;
     }
 
+    function pendingAdditionalReward(uint256 _tid) 
+        external 
+        view 
+        override(IRewardsDistributionRecipient)
+        returns (uint256) 
+    {
+        return 0;
+    }
+
     function add(address _rewardTokens) external virtual override 
     {
 
